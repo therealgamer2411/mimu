@@ -1,0 +1,960 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>MIMU — Mobile Medical Assistant (Final)</title>
+
+<!-- Meyda for MFCC extraction -->
+<script src="https://unpkg.com/meyda/dist/web/meyda.min.js"></script>
+
+<style>
+  :root{
+    --bg:#f7fafc; --card:#fff; --accent:#0ea5a4; --accent-2:#07bfa6; --muted:#64748b; --danger:#ef4444;
+  }
+  html,body{height:100%;margin:0;font-family:Inter,system-ui,Segoe UI,Roboto,Arial;background:var(--bg);color:#0f172a}
+  .app{max-width:980px;margin:0 auto;padding:14px;display:flex;flex-direction:column;gap:14px}
+  header{display:flex;align-items:center;justify-content:space-between;gap:8px}
+  header h1{font-size:18px;margin:0}
+  nav{display:flex;gap:8px}
+  nav button{background:transparent;border:0;padding:8px 10px;border-radius:10px;font-weight:700}
+  .card{background:var(--card);border-radius:12px;padding:12px;box-shadow:0 10px 30px rgba(16,24,40,.06)}
+  .hero{display:flex;gap:12px;align-items:center}
+  .robot-wrap{width:120px;height:120px;border-radius:16px;flex-shrink:0;display:flex;align-items:center;justify-content:center;background:linear-gradient(180deg,#e6fffb,#ffffff);box-shadow:0 10px 30px rgba(6,140,116,0.06)}
+  .robot-svg{width:96px;height:96px;display:block}
+  h2{margin:0;font-size:16px}
+  p.lead{margin:6px 0 0 0;color:var(--muted);font-size:14px}
+  .row{display:flex;gap:8px;align-items:center}
+  .col{display:flex;flex-direction:column;gap:8px}
+  .info-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
+  .big-btn{width:100%;padding:12px;border-radius:12px;border:0;background:linear-gradient(180deg,var(--accent),var(--accent-2));color:#fff;font-weight:800;font-size:15px}
+  .ghost{background:#fff;border:1px solid #e6f0ee;padding:10px;border-radius:10px}
+  label{font-size:13px;color:var(--muted);display:block;margin-top:8px}
+  input,select,textarea{width:100%;padding:10px;border-radius:10px;border:1px solid #e6f0ee;font-size:14px}
+  .small{font-size:13px;color:var(--muted)}
+  .log{max-height:220px;overflow:auto;padding:8px;border-radius:8px;border:1px solid #f0fbf8;background:#fbfffd}
+  footer{font-size:12px;color:var(--muted);text-align:center;padding:10px 0}
+  .meta{font-size:12px;color:#475569}
+  .primary{background:var(--accent);color:white;border:0;padding:10px 12px;border-radius:10px;font-weight:700}
+
+  @media (max-width:720px){
+    .info-grid{grid-template-columns:1fr}
+    .hero{flex-direction:row}
+    .robot-wrap{width:96px;height:96px}
+  }
+
+  /* Recording overlay styles */
+  .rec-overlay {
+    position: fixed; inset: 0; display:flex; align-items:center; justify-content:center;
+    background: rgba(0,0,0,0.55); z-index:2147483647;
+  }
+  .rec-box {
+    width: 92%; max-width:520px; background:#fff; border-radius:14px; padding:18px; box-shadow:0 18px 40px rgba(2,6,23,0.4);
+    display:flex; flex-direction:column; gap:12px; align-items:center;
+  }
+  .rec-header { display:flex; width:100%; justify-content:space-between; align-items:center; }
+  .rec-title { font-size:16px; font-weight:700; }
+  .rec-sub { font-size:13px; color:var(--muted); }
+  .rec-progress { width:120px; height:120px; position:relative; }
+  .rec-progress svg { width:120px; height:120px; transform:rotate(-90deg); }
+  .rec-count { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:20px; font-weight:800; }
+  .rms-meter { width:100%; height:10px; background:#f1f5f9; border-radius:6px; overflow:hidden; margin-top:6px; }
+  .rms-fill { height:100%; width:0%; background:linear-gradient(90deg,#fb923c,#f97316); border-radius:6px; transition:width 0.08s linear; }
+  .wave-canvas { width:100%; height:64px; background:#ffffff; border-radius:8px; border:1px solid #eef2f0; }
+  .rec-controls { display:flex; gap:8px; margin-top:8px; width:100%; justify-content:center; }
+  .cancel-btn { padding:8px 12px; border-radius:10px; border:1px solid #e6f0ee; background:#fff; font-weight:700; }
+  .ok-btn { padding:8px 12px; border-radius:10px; border:0; background:var(--accent); color:#fff; font-weight:800; }
+
+  /* small animation touches */
+  .robot-visor-glow { transform-origin: center; animation: visorPulse 2s ease-in-out infinite; }
+  @keyframes visorPulse {
+    0% { filter: drop-shadow(0 0 0 rgba(14,165,164,0)); }
+    50% { filter: drop-shadow(0 6px 18px rgba(14,165,164,0.18)); }
+    100% { filter: drop-shadow(0 0 0 rgba(14,165,164,0)); }
+  }
+</style>
+</head>
+<body>
+  <div class="app" role="application" aria-label="MIMU mobile assistant">
+
+    <header>
+      <h1>MIMU — Mobile Medical Assistant</h1>
+      <nav>
+        <button id="navHome" onclick="show('home')" aria-label="Home">Home</button>
+        <button id="navSettings" onclick="show('settings')" aria-label="Settings">Settings</button>
+      </nav>
+    </header>
+
+    <!-- HOME: Patient dashboard -->
+    <div id="home" class="card" style="display:block">
+      <div class="hero">
+        <div class="robot-wrap" aria-hidden="true" title="MIMU assistant">
+          <!-- Simple robot SVG -->
+          <svg class="robot-svg" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Robot nurse">
+            <rect x="18" y="38" width="84" height="62" rx="12" fill="url(#bodyGrad)" stroke="rgba(11,135,144,0.12)"/>
+            <g transform="translate(30,8)">
+              <rect x="0" y="6" width="60" height="44" rx="10" fill="#ffffff" stroke="#e6f7f5"/>
+              <rect x="6" y="16" width="48" height="18" rx="6" fill="url(#visorGrad)" class="robot-visor-glow"/>
+              <g transform="translate(12,22)">
+                <rect x="0" y="0" width="8" height="6" rx="2" fill="#021723"/>
+                <rect x="30" y="0" width="8" height="6" rx="2" fill="#021723"/>
+              </g>
+              <rect x="28" y="0" width="4" height="8" rx="2" fill="#dbe7ea"/>
+              <circle cx="30" cy="0" r="3" fill="var(--accent)"/>
+            </g>
+            <g transform="translate(48,52)">
+              <rect x="-8" y="-6" width="16" height="28" rx="3" fill="var(--accent)"/>
+              <rect x="-20" y="0" width="40" height="8" rx="3" fill="var(--accent)"/>
+            </g>
+            <path d="M28 66 C 40 76, 80 76, 92 66" fill="none" stroke="#9fe7e0" stroke-width="3" stroke-linecap="round"/>
+            <defs>
+              <linearGradient id="bodyGrad" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0" stop-color="#f0fffb"/>
+                <stop offset="1" stop-color="#eafffc"/>
+              </linearGradient>
+              <linearGradient id="visorGrad" x1="0" y1="0" x2="1" y2="0">
+                <stop offset="0" stop-color="#0bb8b1"/>
+                <stop offset="1" stop-color="#06a69f"/>
+              </linearGradient>
+            </defs>
+          </svg>
+        </div>
+
+        <div style="flex:1">
+          <h2 id="homeTitle">Welcome — <span id="homeName">Friend</span></h2>
+          <p class="lead" id="homeSubtitle">Quick status & assistance for the patient.</p>
+        </div>
+      </div>
+
+      <hr style="border:none;height:12px"/>
+
+      <!-- Important info -->
+      <div>
+        <div style="font-weight:700">Important information</div>
+        <div class="info-grid" style="margin-top:8px">
+          <div class="card" style="padding:10px">
+            <div class="small">Name</div>
+            <div id="infoName" style="font-weight:700">—</div>
+          </div>
+          <div class="card" style="padding:10px">
+            <div class="small">Age</div>
+            <div id="infoAge" style="font-weight:700">—</div>
+          </div>
+          <div class="card" style="padding:10px">
+            <div class="small">Conditions</div>
+            <div id="infoConditions">—</div>
+          </div>
+          <div class="card" style="padding:10px">
+            <div class="small">Emergency contact</div>
+            <div id="infoContacts">—</div>
+          </div>
+        </div>
+      </div>
+
+      <hr style="border:none;height:12px"/>
+
+      <!-- Assistance area -->
+      <div>
+        <div style="font-weight:700; margin-bottom:8px">Assistance</div>
+
+        <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px">
+          <button id="callEmergency" class="big-btn">Call Emergency</button>
+          <button id="sendAlertBtn" class="big-btn" style="background:linear-gradient(180deg,#f97316,#fb923c)">Send Alert</button>
+          <button id="startMonitorHome" class="ghost">Start Monitoring</button>
+          <button id="stopMonitorHome" class="ghost" disabled>Stop Monitoring</button>
+        </div>
+
+        <div style="margin-top:10px" class="small muted">If the user doesn't respond to prompts, MIMU automatically sends alerts to configured contacts via webhook.</div>
+      </div>
+
+      <hr style="border:none;height:12px"/>
+
+      <!-- Active items: reminders & recent alerts -->
+      <div>
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div style="font-weight:700">Reminders</div>
+          <button id="openSettingsFromRem" class="ghost">Manage</button>
+        </div>
+        <div id="homeReminders" class="small muted" style="margin-top:8px">No reminders</div>
+      </div>
+
+      <div style="margin-top:10px">
+        <div style="font-weight:700">Recent activity</div>
+        <div id="homeLog" class="log" style="margin-top:8px">No events yet</div>
+      </div>
+    </div>
+
+    <!-- SETTINGS: profile, monitor, webhook, reminders, logs, voice enrollment -->
+    <div id="settings" class="card" style="display:none">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div>
+          <div style="font-weight:700">Settings</div>
+          <div class="small muted">Configure profile, monitoring, webhook, voice enrollment and reminders.</div>
+        </div>
+      </div>
+
+      <hr style="border:none;height:12px"/>
+
+      <!-- Profile -->
+      <div>
+        <div style="font-weight:700">Profile</div>
+        <label>Full name</label>
+        <input id="name" placeholder="John Doe" />
+        <label>Age</label>
+        <input id="age" type="number" placeholder="42" />
+        <label>Medical conditions (comma)</label>
+        <input id="conditions" placeholder="hypertension, diabetes" />
+        <label>Emergency contacts (comma, E.164)</label>
+        <input id="contacts" placeholder="+12025550123,+447700900000" />
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <button id="saveProfile" class="primary">Save profile</button>
+          <button id="clearProfile" class="ghost">Clear profile</button>
+        </div>
+      </div>
+
+      <hr style="border:none;height:12px"/>
+
+      <!-- Monitor Settings -->
+      <div>
+        <div style="font-weight:700">Audio Monitor</div>
+        <label>Webhook URL (Make / EasyConnect / n8n)</label>
+        <input id="webhook" placeholder="https://hook.example.com/xxxxx" />
+        <label>Threshold (sensitivity, RMS)</label>
+        <input id="threshold" type="number" step="0.001" value="0.02" />
+        <label>Timeout before auto-alert (seconds)</label>
+        <input id="timeout" type="number" value="20" />
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <button id="startMonitor" class="primary">Start monitoring</button>
+          <button id="stopMonitor" class="ghost" disabled>Stop</button>
+          <button id="calibrate" class="ghost">Calibrate</button>
+        </div>
+        <div style="margin-top:8px" class="small muted">Calibrate measures ambient noise and suggests a threshold.</div>
+      </div>
+
+      <hr style="border:none;height:12px"/>
+
+      <!-- Reminders -->
+      <div>
+        <div style="font-weight:700">Reminders</div>
+        <label>Reminder text</label>
+        <input id="remText" placeholder="Take medication" />
+        <label>Time (HH:MM local)</label>
+        <input id="remTime" placeholder="08:00" />
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <button id="addRem" class="primary">Add reminder</button>
+          <button id="clearRem" class="ghost">Clear reminders</button>
+        </div>
+        <div id="remList" class="small muted" style="margin-top:8px">No reminders</div>
+      </div>
+
+      <hr style="border:none;height:12px"/>
+
+      <!-- Voice Enrollment -->
+      <div>
+        <div style="font-weight:700">Voice Enrollment (Owner verification)</div>
+        <p class="small">Record a short sample (3–6s) of the owner's voice. MIMU stores a local voice fingerprint (MFCC). When a distress sound occurs, MIMU will record a short sample and verify the voice before sending alerts.</p>
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <button id="startEnroll" class="primary">Enroll Owner Voice</button>
+          <button id="removeEnroll" class="ghost">Delete Enrollment</button>
+          <button id="testEnroll" class="ghost">Test Owner Voice</button>
+        </div>
+        <div style="margin-top:8px" class="small">Enrollment status: <strong id="enrollStatus">No enrollment</strong></div>
+        <div style="margin-top:6px" class="small">Similarity threshold: <input id="simThreshold" type="number" step="0.01" value="0.75" style="width:90px" /> (recommended 0.70–0.85)</div>
+        <div style="margin-top:8px" class="small">Advanced owner settings (in case you need more control):</div>
+        <label>Enrollment samples (count)</label>
+        <input id="ownerSampleCount" type="number" value="4" min="1" style="width:120px" />
+        <label>Sample duration (sec)</label>
+        <input id="ownerSampleDur" type="number" value="3" min="1" style="width:120px" />
+        <label>Min RMS to accept sample</label>
+        <input id="ownerMinRms" type="number" step="0.0001" value="0.0015" style="width:160px" />
+        <label style="margin-top:8px"><input id="requireOwnerVoice" type="checkbox" checked /> Require owner verification before sending alert</label>
+      </div>
+
+      <hr style="border:none;height:12px"/>
+
+      <!-- Logs & Manual test -->
+      <div>
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div style="font-weight:700">Logs & Test</div>
+          <div class="small muted">Manual actions</div>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <button id="manualAlert" class="primary">Send manual alert</button>
+          <button id="viewPayload" class="ghost">View last payload</button>
+        </div>
+        <div style="margin-top:10px">
+          <div style="font-weight:600">Activity Log</div>
+          <div id="logBox" class="log"></div>
+        </div>
+      </div>
+    </div>
+
+    <footer>Demo MIMU — proof-of-concept. Not a medical device.</footer>
+  </div>
+
+  <!-- Recording overlay template (hidden) -->
+  <div id="recOverlayTemplate" style="display:none">
+    <div class="rec-overlay template-overlay">
+      <div class="rec-box template-box" role="dialog" aria-modal="true" aria-label="Recording overlay">
+        <div class="rec-header">
+          <div>
+            <div class="rec-title">Recording sample</div>
+            <div class="rec-sub">Speak the same short phrase clearly</div>
+          </div>
+          <div class="rec-sample-index" style="font-weight:700"></div>
+        </div>
+
+        <div class="rec-progress">
+          <svg viewBox="0 0 36 36">
+            <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="#eef2e7" stroke-width="4"></path>
+            <path class="rec-progress-arc" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="#0ea5a4" stroke-width="4" stroke-dasharray="0 100"></path>
+          </svg>
+          <div class="rec-count">3</div>
+        </div>
+
+        <canvas class="wave-canvas"></canvas>
+        <div class="rms-meter" aria-hidden="true"><div class="rms-fill"></div></div>
+        <div style="width:100%;display:flex;justify-content:space-between;align-items:center">
+          <div class="small rec-rms-label">RMS: 0.000</div>
+          <div class="small rec-frames-label">Frames: 0</div>
+        </div>
+
+        <div class="rec-controls">
+          <button class="cancel-btn">Cancel</button>
+          <button class="ok-btn">OK</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+/* ===========================
+   Final single-file MIMU app
+   Features included:
+   - Profile, reminders, logs, webhook
+   - Audio monitor with RMS trigger
+   - Visual recorder overlay using Meyda (MFCC + RMS + spectral centroid + zcr)
+   - Owner enrollment & verification (on-device)
+   - Prompt with 10-second auto-cancel
+   =========================== */
+
+/* ---------- SPA helpers ---------- */
+function show(id){
+  document.getElementById('home').style.display = id === 'home' ? 'block' : 'none';
+  document.getElementById('settings').style.display = id === 'settings' ? 'block' : 'none';
+  document.getElementById('navHome').style.opacity = id === 'home' ? '1' : '0.7';
+  document.getElementById('navSettings').style.opacity = id === 'settings' ? '1' : '0.7';
+}
+show('home');
+
+function uiLog(msg){
+  const box = document.getElementById('logBox');
+  const line = new Date().toLocaleString() + ' — ' + msg;
+  box.innerHTML = line + '<br/>' + box.innerHTML;
+  const home = document.getElementById('homeLog');
+  if(home) home.innerHTML = box.innerHTML;
+  console.log(msg);
+}
+
+/* ---------- Profile ---------- */
+function saveProfile(){
+  const profile = {
+    name: document.getElementById('name').value.trim(),
+    age: document.getElementById('age').value.trim(),
+    conditions: document.getElementById('conditions').value.trim(),
+    emergencyContacts: document.getElementById('contacts').value.split(',').map(s=>s.trim()).filter(Boolean)
+  };
+  localStorage.setItem('mimu_profile', JSON.stringify(profile));
+  uiLog('Profile saved');
+  renderHomeInfo();
+}
+function loadProfileToUI(){
+  const raw = localStorage.getItem('mimu_profile');
+  if(!raw) return;
+  try{
+    const p = JSON.parse(raw);
+    document.getElementById('name').value = p.name || '';
+    document.getElementById('age').value = p.age || '';
+    document.getElementById('conditions').value = p.conditions || '';
+    document.getElementById('contacts').value = (p.emergencyContacts||[]).join(',');
+  }catch(e){}
+}
+function clearProfileUI(){
+  localStorage.removeItem('mimu_profile');
+  document.getElementById('name').value=''; document.getElementById('age').value=''; document.getElementById('conditions').value=''; document.getElementById('contacts').value='';
+  uiLog('Profile cleared');
+  renderHomeInfo();
+}
+function renderHomeInfo(){
+  const raw = localStorage.getItem('mimu_profile');
+  const p = raw ? JSON.parse(raw) : {};
+  document.getElementById('homeName').textContent = p.name || 'Friend';
+  document.getElementById('infoName').textContent = p.name || '—';
+  document.getElementById('infoAge').textContent = p.age || '—';
+  document.getElementById('infoConditions').textContent = p.conditions || '—';
+  document.getElementById('infoContacts').textContent = (p.emergencyContacts || []).join(', ') || '—';
+}
+
+/* ---------- Reminders ---------- */
+function addReminder(){
+  const text = document.getElementById('remText').value.trim();
+  const time = document.getElementById('remTime').value.trim();
+  if(!text || !time){ alert('Fill both fields'); return; }
+  const rems = JSON.parse(localStorage.getItem('mimu_rems')||'[]');
+  rems.push({id: Date.now(), text, time});
+  localStorage.setItem('mimu_rems', JSON.stringify(rems));
+  document.getElementById('remText').value=''; document.getElementById('remTime').value='';
+  renderReminders();
+  uiLog('Added reminder: ' + text + ' @' + time);
+}
+function renderReminders(){
+  const rems = JSON.parse(localStorage.getItem('mimu_rems')||'[]');
+  const el = document.getElementById('remList');
+  const homeEl = document.getElementById('homeReminders');
+  if(!rems.length){ if(el) el.textContent='No reminders'; if(homeEl) homeEl.textContent='No reminders'; return; }
+  const html = rems.map(r => `${r.time} — ${r.text}`).join('<br/>');
+  if(el) el.innerHTML = html;
+  if(homeEl) homeEl.innerHTML = html;
+}
+function clearReminders(){
+  localStorage.removeItem('mimu_rems'); renderReminders(); uiLog('Cleared reminders');
+}
+
+/* check reminders every minute */
+setInterval(()=>{
+  const now = new Date(); const hh = String(now.getHours()).padStart(2,'0'); const mm = String(now.getMinutes()).padStart(2,'0');
+  const cur = hh+':'+mm;
+  const rems = JSON.parse(localStorage.getItem('mimu_rems')||'[]');
+  rems.forEach(r => {
+    if(r.time === cur){
+      uiLog('Reminder triggered: ' + r.text);
+      if(window.Notification && Notification.permission === 'granted'){
+        new Notification('MIMU Reminder', {body: r.text});
+      } else {
+        alert('Reminder: ' + r.text);
+      }
+    }
+  });
+}, 60000);
+
+/* ---------- Visual recorder (Meyda) ---------- */
+/* Template cloning + in-clone querying to avoid ID conflicts */
+function cloneRecOverlayTemplate(){
+  const tpl = document.getElementById('recOverlayTemplate');
+  const clone = tpl.firstElementChild.cloneNode(true);
+  // convert children from template to live clone: return clone root node
+  return clone;
+}
+
+/**
+ * showRecordingOverlay(options)
+ * - durationSec: seconds to record
+ * - bufferSize: meyda buffer size
+ * - mfccCoeffs: number of MFCC coefficients
+ * - minFrameRms: skip frames below this RMS
+ * - sampleIndex / totalSamples: UI display
+ *
+ * Returns: { vector, avgRms, avgCentroid, avgZcr, frames } or null on cancel/failure
+ */
+async function showRecordingOverlay({ durationSec = 3, bufferSize = 512, mfccCoeffs = 13, minFrameRms = 0.0003, sampleIndex = null, totalSamples = null, title = 'Recording sample', sub = 'Speak clearly' } = {}) {
+  return new Promise(async (resolve) => {
+    const overlayNode = cloneRecOverlayTemplate();
+    document.body.appendChild(overlayNode);
+
+    // find elements inside this overlay
+    const overlayRoot = overlayNode.querySelector('.rec-overlay');
+    const box = overlayNode.querySelector('.rec-box');
+    const recCountEl = overlayNode.querySelector('.rec-count');
+    const recArc = overlayNode.querySelector('.rec-progress-arc');
+    const waveCanvas = overlayNode.querySelector('.wave-canvas');
+    const rmsFill = overlayNode.querySelector('.rms-fill');
+    const rmsLabel = overlayNode.querySelector('.rec-rms-label');
+    const framesLabel = overlayNode.querySelector('.rec-frames-label');
+    const titleEl = overlayNode.querySelector('.rec-title');
+    const subEl = overlayNode.querySelector('.rec-sub');
+    const sampleIndexEl = overlayNode.querySelector('.rec-sample-index');
+    const cancelBtn = overlayNode.querySelector('.cancel-btn');
+    const okBtn = overlayNode.querySelector('.ok-btn');
+
+    titleEl.textContent = title;
+    subEl.textContent = sub;
+    sampleIndexEl.textContent = sampleIndex && totalSamples ? `Sample ${sampleIndex}/${totalSamples}` : '';
+    recCountEl.textContent = String(Math.ceil(durationSec));
+
+    // canvas sizing
+    waveCanvas.width = waveCanvas.clientWidth * devicePixelRatio;
+    waveCanvas.height = waveCanvas.clientHeight * devicePixelRatio;
+    const wctx = waveCanvas.getContext('2d');
+
+    let audioCtx=null, src=null, analyser=null, meydaAnalyzer=null, stream=null;
+    let cancelled=false, rafId=null, framesCount=0;
+    const rmsFrames=[], mfccFrames[], centroidFrames=[], zcrFrames[];
+
+    let startTime = performance.now();
+
+    function updateUI(){
+      const elapsed = (performance.now() - startTime)/1000;
+      const remaining = Math.max(0, durationSec - elapsed);
+      recCountEl.textContent = String(Math.ceil(remaining));
+      const pct = Math.min(1, elapsed/durationSec);
+      const dash = (pct * 100).toFixed(2);
+      recArc.setAttribute('stroke-dasharray', `${dash} 100`);
+
+      // waveform draw
+      if(analyser){
+        const data = new Float32Array(analyser.fftSize);
+        analyser.getFloatTimeDomainData(data);
+        const cw = waveCanvas.width, ch = waveCanvas.height;
+        wctx.clearRect(0,0,cw,ch);
+        wctx.fillStyle = '#fff';
+        wctx.fillRect(0,0,cw,ch);
+        wctx.lineWidth = 2 * devicePixelRatio;
+        wctx.strokeStyle = '#0ea5a4';
+        wctx.beginPath();
+        for(let i=0;i<cw;i++){
+          const idx = Math.floor(i * (data.length/cw));
+          const v = data[idx] || 0;
+          const y = (1 - (v + 1)/2) * ch;
+          if(i===0) wctx.moveTo(i,y); else wctx.lineTo(i,y);
+        }
+        wctx.stroke();
+      }
+
+      if(!cancelled) rafId = requestAnimationFrame(updateUI);
+    }
+
+    function cleanupAndResolve(result){
+      cancelled = true;
+      try{ if(rafId) cancelAnimationFrame(rafId); }catch(e){}
+      try{ if(meydaAnalyzer) meydaAnalyzer.stop(); }catch(e){}
+      try{ if(audioCtx) audioCtx.close(); }catch(e){}
+      try{ if(stream) stream.getTracks().forEach(t=>t.stop()); }catch(e){}
+      try{ document.body.removeChild(overlayNode); }catch(e){}
+      resolve(result);
+    }
+
+    cancelBtn.addEventListener('click', ()=> {
+      uiLog('Recording cancelled by user');
+      cleanupAndResolve(null);
+    });
+
+    okBtn.addEventListener('click', () => {
+      uiLog('Recording accepted early by user');
+      finishAndReturn();
+    });
+
+    async function finishAndReturn(){
+      if(mfccFrames.length === 0){
+        uiLog('No usable frames captured during recording.');
+        cleanupAndResolve(null);
+        return;
+      }
+      const M = mfccFrames[0].length;
+      const avg = new Array(M).fill(0);
+      for(const f of mfccFrames) for(let i=0;i<M;i++) avg[i] += f[i];
+      for(let i=0;i<M;i++) avg[i] /= mfccFrames.length;
+      const norm = Math.sqrt(avg.reduce((s,v)=>s+v*v,0)) || 1;
+      const mfccNormalized = avg.map(v=>v / norm);
+      const avgRms = rmsFrames.length ? (rmsFrames.reduce((a,b)=>a+b,0)/rmsFrames.length) : 0;
+      const avgCentroid = centroidFrames.length ? (centroidFrames.reduce((a,b)=>a+b,0)/centroidFrames.length) : 0;
+      const avgZcr = zcrFrames.length ? (zcrFrames.reduce((a,b)=>a+b,0)/zcrFrames.length) : 0;
+      const centroidScaled = avgCentroid / 4000; // scale down centroid
+      const combined = mfccNormalized.concat([centroidScaled, avgZcr]);
+      uiLog(`Recording finished. frames=${mfccFrames.length} avgRms=${avgRms.toFixed(6)}`);
+      cleanupAndResolve({ vector: combined, avgRms, avgCentroid, avgZcr, frames: mfccFrames.length });
+    }
+
+    try{
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      src = audioCtx.createMediaStreamSource(stream);
+      analyser = audioCtx.createAnalyser(); analyser.fftSize = 2048;
+      src.connect(analyser);
+
+      meydaAnalyzer = Meyda.createMeydaAnalyzer({
+        audioContext: audioCtx,
+        source: src,
+        bufferSize: bufferSize,
+        hopSize: Math.floor(bufferSize/2),
+        windowingFunction: "hanning",
+        featureExtractors: ["mfcc","rms","spectralCentroid","zcr"],
+        numberOfMFCCCoefficients: mfccCoeffs,
+        callback: (features) => {
+          if(!features) return;
+          const rms = features.rms || 0;
+          if(rms >= minFrameRms){
+            if(features.mfcc) mfccFrames.push(features.mfcc.slice());
+            rmsFrames.push(rms);
+            if(typeof features.spectralCentroid === 'number') centroidFrames.push(features.spectralCentroid);
+            if(typeof features.zcr === 'number') zcrFrames.push(features.zcr);
+            framesCount = mfccFrames.length;
+          }
+          // update numeric UI
+          rmsLabel.textContent = 'RMS: ' + (rms || 0).toFixed(6);
+          framesLabel.textContent = 'Frames: ' + framesCount;
+          const rmsPct = Math.min(1, (rms / 0.05));
+          rmsFill.style.width = (rmsPct*100).toFixed(2) + '%';
+        }
+      });
+      meydaAnalyzer.start();
+
+      startTime = performance.now();
+      rafId = requestAnimationFrame(updateUI);
+
+      setTimeout(()=> {
+        if(cancelled) return;
+        finishAndReturn();
+      }, durationSec * 1000);
+    }catch(err){
+      uiLog('Recording failed: ' + (err.message || err));
+      cleanupAndResolve(null);
+    }
+  });
+}
+
+/* compatibility wrapper used by enrollment & verification */
+async function recordFeatures(durationSec=3, bufferSize=512, mfccCoeffs=13, minFrameRms=0.0003, sampleIndex=null, totalSamples=null){
+  return await showRecordingOverlay({ durationSec, bufferSize, mfccCoeffs, minFrameRms, sampleIndex, totalSamples, title:'Recording sample', sub:'Speak the same short phrase' });
+}
+
+/* ---------- cosine similarity ---------- */
+function cosineSim(a,b){
+  if(!a||!b||a.length!==b.length) return -1;
+  let dot=0, na=0, nb=0;
+  for(let i=0;i<a.length;i++){ dot+=a[i]*b[i]; na+=a[i]*a[i]; nb+=b[i]*b[i]; }
+  if(na===0||nb===0) return -1;
+  return dot / (Math.sqrt(na)*Math.sqrt(nb));
+}
+
+/* ---------- Owner enrollment & verification ---------- */
+const OWNER_KEY = 'mimu_owner_v2';
+function saveOwner(obj){ localStorage.setItem(OWNER_KEY, JSON.stringify(obj)); }
+function loadOwner(){ const r = localStorage.getItem(OWNER_KEY); return r ? JSON.parse(r) : null;}
+function clearOwner(){ localStorage.removeItem(OWNER_KEY); updateOwnerUI(); uiLog('Owner enrollment removed'); }
+
+async function enrollOwnerSamples(count=4, dur=3, minSampleRms=0.0015){
+  uiLog(`Owner enrollment started: ${count} samples (${dur}s each)`);
+  const vectors = [];
+  for(let i=1;i<=count;i++){
+    const sample = await recordFeatures(dur, 512, 13, minSampleRms, i, count);
+    if(!sample){
+      uiLog(`Sample ${i} failed or cancelled. Aborting enrollment.`);
+      alert('Sample failed or cancelled. Enrollment aborted.');
+      return null;
+    }
+    if(sample.avgRms < minSampleRms){
+      uiLog(`Sample ${i} too quiet (avgRms=${sample.avgRms.toFixed(6)}). Retake it.`);
+      alert(`Sample ${i} too quiet — please speak louder. Retaking sample ${i}.`);
+      i--; // retry
+      continue;
+    }
+    vectors.push(sample.vector);
+    uiLog(`Sample ${i} accepted (avgRms=${sample.avgRms.toFixed(6)})`);
+  }
+
+  // centroid and pairwise statistics
+  const M = vectors[0].length;
+  const centroid = new Array(M).fill(0);
+  for(const v of vectors) for(let j=0;j<M;j++) centroid[j] += v[j];
+  for(let j=0;j<M;j++) centroid[j] /= vectors.length;
+
+  const sims = [];
+  for(let i=0;i<vectors.length;i++) for(let j=i+1;j<vectors.length;j++) sims.push(cosineSim(vectors[i], vectors[j]));
+  const meanSim = sims.length ? sims.reduce((a,b)=>a+b,0)/sims.length : 1.0;
+  const stdSim = sims.length ? Math.sqrt(sims.reduce((a,b)=>a+(b-meanSim)*(b-meanSim),0)/sims.length) : 0.001;
+
+  const ownerObj = { vectors, centroid, meanSim, stdSim, created: new Date().toISOString() };
+  saveOwner(ownerObj);
+  updateOwnerUI();
+  uiLog(`Owner enrolled: samples=${vectors.length} meanSim=${meanSim.toFixed(3)} stdSim=${stdSim.toFixed(3)}`);
+  alert('Owner enrollment saved.');
+  return ownerObj;
+}
+
+async function verifyOwnerOnce(duration=2, minSampleRms=0.001){
+  const owner = loadOwner();
+  if(!owner || !owner.vectors || owner.vectors.length===0){ uiLog('No owner enrollment'); return { matched:false, reason:'no-enrollment' }; }
+  uiLog('Owner verification: recording visual sample...');
+  const result = await recordFeatures(duration, 512, 13, minSampleRms);
+  if(!result){ uiLog('Verification failed (no sample)'); return { matched:false, reason:'no-audio' }; }
+  if(result.avgRms < minSampleRms){ uiLog('Verification sample too quiet'); return { matched:false, reason:'quiet' }; }
+
+  const sims = owner.vectors.map(v => cosineSim(v, result.vector));
+  const bestSim = sims.length ? Math.max(...sims) : -1;
+  const sorted = sims.slice().sort((a,b)=>b-a);
+  const k = Math.min(3, sorted.length);
+  const topKmean = k>0 ? (sorted.slice(0,k).reduce((a,b)=>a+b,0)/k) : bestSim;
+  const centroidSim = cosineSim(owner.centroid, result.vector);
+  const absThresh = parseFloat(document.getElementById('simThreshold').value) || 0.75;
+  // adaptive threshold (mean - multiplier * std)
+  const stdMultiplier = 1.0;
+  const adaptiveThresh = (owner.meanSim || 0) - stdMultiplier * (owner.stdSim || 0.001);
+  const acceptByAbs = centroidSim >= absThresh || bestSim >= absThresh;
+  const acceptByAdaptive = centroidSim >= adaptiveThresh || bestSim >= adaptiveThresh || topKmean >= adaptiveThresh;
+
+  uiLog(`verify sims best=${bestSim.toFixed(3)} topKmean=${topKmean.toFixed(3)} centroid=${centroidSim.toFixed(3)} | abs=${absThresh.toFixed(3)} adaptive=${adaptiveThresh.toFixed(3)}`);
+  const matched = acceptByAbs || acceptByAdaptive;
+  return { matched, bestSim, topKmean, centroidSim, adaptiveThresh, absThresh };
+}
+
+function updateOwnerUI(){
+  const owner = loadOwner();
+  if(!owner){ document.getElementById('enrollStatus').textContent = 'No enrollment'; return; }
+  document.getElementById('enrollStatus').textContent = 'Enrolled';
+  const stats = `Samples: ${owner.vectors.length} • meanSim=${(owner.meanSim||0).toFixed(3)} std=${(owner.stdSim||0).toFixed(3)} • created: ${new Date(owner.created).toLocaleString()}`;
+  const el = document.getElementById('enrollStatus');
+  if(el) el.nextElementSibling && (el.nextElementSibling.textContent = stats);
+}
+updateOwnerUI();
+
+/* ---------- Simple monitor + flow ---------- */
+let audioCtx=null, analyser=null, dataArray=null, micSrc=null, raf=null, monitorRunning=false, lastAlertAt=0;
+
+function computeRMS(){
+  if(!analyser || !dataArray) return 0;
+  analyser.getFloatTimeDomainData(dataArray);
+  let sum=0; for(let i=0;i<dataArray.length;i++) sum += dataArray[i]*dataArray[i];
+  return Math.sqrt(sum/dataArray.length);
+}
+
+async function startSimpleMonitor(){
+  if(monitorRunning) return;
+  try{
+    const stream = await navigator.mediaDevices.getUserMedia({audio:true});
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    micSrc = audioCtx.createMediaStreamSource(stream);
+    analyser = audioCtx.createAnalyser(); analyser.fftSize = 2048;
+    micSrc.connect(analyser);
+    dataArray = new Float32Array(analyser.fftSize);
+    monitorRunning = true;
+    document.getElementById('startMonitor').disabled = true;
+    document.getElementById('stopMonitor').disabled = false;
+    document.getElementById('startMonitorHome').disabled = true;
+    document.getElementById('stopMonitorHome').disabled = false;
+    document.getElementById('homeSubtitle').textContent = 'Monitoring...';
+    uiLog('Monitoring started');
+    monitorLoopSimple();
+  }catch(e){
+    alert('Microphone permission required.');
+    uiLog('Monitor start error: ' + (e.message||e));
+  }
+}
+
+function stopSimpleMonitor(){
+  if(raf) cancelAnimationFrame(raf);
+  try{ if(audioCtx) audioCtx.close(); }catch(e){}
+  audioCtx=analyser=micSrc=null; dataArray=null; raf=null; monitorRunning=false;
+  document.getElementById('startMonitor').disabled=false;
+  document.getElementById('stopMonitor').disabled=true;
+  document.getElementById('startMonitorHome').disabled=false;
+  document.getElementById('stopMonitorHome').disabled=true;
+  document.getElementById('homeSubtitle').textContent = 'Idle';
+  uiLog('Monitoring stopped');
+}
+
+function monitorLoopSimple(){
+  const threshold = parseFloat(document.getElementById('threshold').value) || 0.02;
+  const timeoutSec = parseInt(document.getElementById('timeout').value) || 20;
+  const rms = computeRMS();
+  if(rms >= threshold && Date.now() - lastAlertAt > 4000){
+    lastAlertAt = Date.now();
+    uiLog('RMS trigger: ' + rms.toFixed(4));
+    (async ()=>{
+      try{
+        // capture short sample visually
+        const sample = await recordFeatures(2, 512, 13, 0.0005);
+        if(!sample){ uiLog('No sample captured for verification'); return; }
+        const requireOwner = document.getElementById('requireOwnerVoice').checked;
+        if(requireOwner){
+          uiLog('Owner verification required — performing verification');
+          const res = await verifyOwnerOnce(2, parseFloat(document.getElementById('ownerMinRms').value) || 0.001);
+          if(res.matched){
+            uiLog('Owner verified — prompting user (10s auto-cancel)');
+            await promptUserWithAutoAlert(timeoutSec, sample.avgRms);
+          } else {
+            uiLog('Owner mismatch — no alert sent.');
+            alert('Detected sound did not match owner voice. No alert sent.');
+          }
+        } else {
+          uiLog('Owner verification not required — prompting user');
+          await promptUserWithAutoAlert(timeoutSec, sample.avgRms);
+        }
+      }catch(e){
+        uiLog('Monitor loop error: ' + (e.message||e));
+      }
+    })();
+  }
+  raf = requestAnimationFrame(monitorLoopSimple);
+}
+
+/* ---------- Prompt with 10s auto-cancel UI ---------- */
+function showPromptWithTimeout(message, autoCancelSeconds = 10) {
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    Object.assign(overlay.style, { position:'fixed', inset:'0', background:'rgba(0,0,0,0.45)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:2147483647 });
+    const box = document.createElement('div');
+    Object.assign(box.style, { width:'100%', maxWidth:'420px', background:'#fff', borderRadius:'14px', padding:'18px', textAlign:'center', boxShadow:'0 14px 40px rgba(2,6,23,.4)' });
+    const msg = document.createElement('div'); msg.textContent = message; Object.assign(msg.style, {marginBottom:'12px', fontSize:'15px'});
+    const countdown = document.createElement('div'); countdown.textContent = `Auto-cancel in ${autoCancelSeconds} s`; Object.assign(countdown.style, {marginBottom:'12px', color:'#64748b'});
+    const btnRow = document.createElement('div'); Object.assign(btnRow.style, {display:'flex', gap:'8px', justifyContent:'center'});
+    const okBtn = document.createElement('button'); okBtn.textContent = 'OK'; Object.assign(okBtn.style, {padding:'10px 14px', borderRadius:'10px', border:'0', background:'#0ea5a4', color:'#fff', fontWeight:'700'});
+    const cancelBtn = document.createElement('button'); cancelBtn.textContent = 'Cancel'; Object.assign(cancelBtn.style, {padding:'10px 14px', borderRadius:'10px', border:'1px solid #e6f0ee', background:'#fff', fontWeight:'700'});
+    btnRow.appendChild(okBtn); btnRow.appendChild(cancelBtn);
+    box.appendChild(msg); box.appendChild(countdown); box.appendChild(btnRow); overlay.appendChild(box); document.body.appendChild(overlay);
+
+    let seconds = autoCancelSeconds;
+    const interval = setInterval(() => {
+      seconds--;
+      countdown.textContent = `Auto-cancel in ${seconds} s`;
+      if(seconds <= 0){
+        clearInterval(interval); cleanup(); resolve(false);
+      }
+    }, 1000);
+
+    function cleanup(){ try{ document.body.removeChild(overlay);}catch(e){} }
+    okBtn.addEventListener('click', ()=>{ clearInterval(interval); cleanup(); resolve(true); });
+    cancelBtn.addEventListener('click', ()=>{ clearInterval(interval); cleanup(); resolve(false); });
+    function escHandler(e){ if(e.key === 'Escape'){ clearInterval(interval); cleanup(); resolve(false); document.removeEventListener('keydown', escHandler); } }
+    document.addEventListener('keydown', escHandler);
+  });
+}
+async function promptUserWithAutoAlert(timeoutSec, rms){
+  document.getElementById('homeSubtitle').textContent = 'Possible distress — awaiting confirmation';
+  let responded=false;
+  const autoAlertTimer = setTimeout(()=> {
+    if(!responded){
+      responded = true;
+      uiLog('No response — auto-alert sent (timeout reached).');
+      sendAlert('no_response', rms);
+    }
+  }, timeoutSec * 1000);
+
+  try{
+    const userOk = await showPromptWithTimeout('Did you trigger this sound? Press OK if you are fine. If not, alerts will be sent.', 10);
+    if(responded) return;
+    responded = true;
+    clearTimeout(autoAlertTimer);
+    if(userOk){
+      uiLog('User confirmed OK.');
+      document.getElementById('homeSubtitle').textContent = 'User confirmed OK';
+    } else {
+      uiLog('User indicated NOT OK — sending alert.');
+      document.getElementById('homeSubtitle').textContent = 'User NOT OK — alert sent';
+      sendAlert('user_not_ok', rms);
+    }
+  }catch(e){ uiLog('Prompt error: ' + (e.message || e)); }
+}
+
+/* ---------- Webhook & payload ---------- */
+function buildPayload(eventType, rms){
+  const profile = JSON.parse(localStorage.getItem('mimu_profile') || '{}') || {};
+  return {
+    event: eventType,
+    rms: parseFloat((rms||0).toFixed(6)),
+    time: (new Date()).toISOString(),
+    user: {
+      id: profile.name ? profile.name.replace(/\s+/g,'_').toLowerCase() : 'unknown',
+      name: profile.name || 'Unknown',
+      age: profile.age || null,
+      conditions: profile.conditions || '',
+      emergencyContacts: profile.emergencyContacts || []
+    },
+    source: 'mimu-final'
+  };
+}
+async function sendAlert(eventType, rms){
+  const url = document.getElementById('webhook').value.trim();
+  const payload = buildPayload(eventType, rms);
+  sessionStorage.setItem('mimu_last_payload', JSON.stringify(payload));
+  uiLog('Sending payload: ' + JSON.stringify(payload));
+  if(!url){ uiLog('No webhook configured'); alert('Webhook URL not configured in Settings.'); return; }
+  try{
+    const resp = await fetch(url, { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify(payload) });
+    uiLog('Webhook response: ' + resp.status);
+    alert('Alert sent (status ' + resp.status + ')');
+  }catch(e){
+    uiLog('Webhook error: ' + (e.message || e));
+    alert('Failed to send webhook: ' + (e.message || 'network error'));
+  }
+}
+
+/* ---------- Calibration ---------- */
+document.getElementById('calibrate').addEventListener('click', ()=> {
+  (async ()=>{
+    try{
+      const stream = await navigator.mediaDevices.getUserMedia({audio:true});
+      const tmpCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const src = tmpCtx.createMediaStreamSource(stream);
+      const an = tmpCtx.createAnalyser(); an.fftSize = 2048; src.connect(an);
+      const arr = new Float32Array(an.fftSize);
+      let samples = [], start = performance.now();
+      while(performance.now() - start < 2000){
+        an.getFloatTimeDomainData(arr);
+        let sum=0; for(let i=0;i<arr.length;i++) sum += arr[i]*arr[i];
+        samples.push(Math.sqrt(sum/arr.length));
+        await new Promise(r=>setTimeout(r,100));
+      }
+      const avg = samples.reduce((a,b)=>a+b,0)/samples.length;
+      document.getElementById('threshold').value = Math.max(0.01, (avg*4).toFixed(3));
+      uiLog('Calibration complete; suggested threshold: ' + document.getElementById('threshold').value);
+      try{ tmpCtx.close(); }catch(e){}
+      stream.getTracks().forEach(t=>t.stop());
+    }catch(e){ alert('Calibration failed: ' + (e.message || e)); }
+  })();
+});
+
+/* ---------- Wiring UI buttons ---------- */
+document.getElementById('saveProfile').addEventListener('click', saveProfile);
+document.getElementById('clearProfile').addEventListener('click', clearProfileUI);
+document.getElementById('addRem').addEventListener('click', addReminder);
+document.getElementById('clearRem').addEventListener('click', clearReminders);
+
+document.getElementById('startMonitor').addEventListener('click', startSimpleMonitor);
+document.getElementById('stopMonitor').addEventListener('click', stopSimpleMonitor);
+document.getElementById('startMonitorHome').addEventListener('click', startSimpleMonitor);
+document.getElementById('stopMonitorHome').addEventListener('click', stopSimpleMonitor);
+
+document.getElementById('manualAlert').addEventListener('click', ()=> sendAlert('manual_alert', 0));
+document.getElementById('sendAlertBtn').addEventListener('click', ()=> sendAlert('manual_alert', 0));
+document.getElementById('viewPayload').addEventListener('click', ()=> { const p = sessionStorage.getItem('mimu_last_payload'); if(!p) return alert('No payload yet'); alert(p); });
+
+document.getElementById('callEmergency').addEventListener('click', ()=>{
+  const profile = JSON.parse(localStorage.getItem('mimu_profile')||'{}')||{};
+  const contacts = profile.emergencyContacts || [];
+  if(!contacts.length) return alert('No emergency contact configured in Settings.');
+  window.location.href = 'tel:' + contacts[0];
+});
+document.getElementById('openSettingsFromRem').addEventListener('click', ()=> show('settings'));
+
+/* enrollment/test buttons */
+document.getElementById('startEnroll').addEventListener('click', async ()=>{
+  const c = parseInt(document.getElementById('ownerSampleCount').value) || 4;
+  const d = parseFloat(document.getElementById('ownerSampleDur').value) || 3;
+  const minR = parseFloat(document.getElementById('ownerMinRms').value) || 0.0015;
+  await enrollOwnerSamples(c, d, minR);
+  updateOwnerUI();
+});
+document.getElementById('removeEnroll').addEventListener('click', ()=> { if(confirm('Remove owner enrollment?')){ clearOwner(); }});
+document.getElementById('testEnroll').addEventListener('click', async ()=>{
+  const r = await verifyOwnerOnce(parseFloat(document.getElementById('ownerSampleDur').value)||2, parseFloat(document.getElementById('ownerMinRms').value)||0.001);
+  if(!r) { alert('Verification error'); return; }
+  if(r.matched) alert('Owner VERIFIED (best=' + (r.bestSim||0).toFixed(3) + ')');
+  else alert('Owner NOT matched. Best=' + (r.bestSim||0).toFixed(3));
+});
+
+/* keyboard shortcuts (desktop) */
+document.addEventListener('keydown', (e)=> {
+  if(e.key === 'm') startSimpleMonitor();
+  if(e.key === 'n') stopSimpleMonitor();
+});
+
+/* ---------- Init ---------- */
+loadProfileToUI();
+renderReminders();
+renderHomeInfo();
+updateOwnerUI();
+uiLog('App initialized — ready for the hackathon. Enroll owner voice in Settings if you want voice-verified alerts.');
+
+</script>
+</body>
+</html>
