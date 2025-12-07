@@ -330,13 +330,16 @@
 <script>
 /* ===========================
    Final single-file MIMU app
-   Features included:
-   - Profile, reminders, logs, webhook
-   - Audio monitor with RMS trigger
-   - Visual recorder overlay using Meyda (MFCC + RMS + spectral centroid + zcr)
-   - Owner enrollment & verification (on-device)
-   - Prompt with 10-second auto-cancel
+   - Reuse monitor MediaStream
+   - Prevent double recordings
+   - Visual recorder overlay (Meyda)
+   - Owner enrollment & verification
+   - 10s auto-cancel prompt
    =========================== */
+
+/* Globals for reuse and locking */
+let monitorStream = null;       // stream used by the running monitor
+let isRecordingSample = false;  // prevent concurrent sample recordings
 
 /* ---------- SPA helpers ---------- */
 function show(id){
@@ -437,33 +440,23 @@ setInterval(()=>{
   });
 }, 60000);
 
-/* ---------- Visual recorder (Meyda) ---------- */
-/* Template cloning + in-clone querying to avoid ID conflicts */
+/* ---------- Visual recorder (Meyda) helpers ---------- */
 function cloneRecOverlayTemplate(){
   const tpl = document.getElementById('recOverlayTemplate');
   const clone = tpl.firstElementChild.cloneNode(true);
-  // convert children from template to live clone: return clone root node
   return clone;
 }
 
-/**
- * showRecordingOverlay(options)
- * - durationSec: seconds to record
- * - bufferSize: meyda buffer size
- * - mfccCoeffs: number of MFCC coefficients
- * - minFrameRms: skip frames below this RMS
- * - sampleIndex / totalSamples: UI display
- *
- * Returns: { vector, avgRms, avgCentroid, avgZcr, frames } or null on cancel/failure
- */
-async function showRecordingOverlay({ durationSec = 3, bufferSize = 512, mfccCoeffs = 13, minFrameRms = 0.0003, sampleIndex = null, totalSamples = null, title = 'Recording sample', sub = 'Speak clearly' } = {}) {
+/* showRecordingOverlay: supports reuseMonitorStream option */
+async function showRecordingOverlay({ durationSec = 3, bufferSize = 512, mfccCoeffs = 13, minFrameRms = 0.0003, sampleIndex = null, totalSamples = null, title = 'Recording sample', sub = 'Speak clearly', reuseMonitorStream = false } = {}) {
+  // prevent concurrent overlays
+  if(isRecordingSample) { uiLog('Recording already in progress — skipping new request'); return null; }
+  isRecordingSample = true;
+
   return new Promise(async (resolve) => {
     const overlayNode = cloneRecOverlayTemplate();
     document.body.appendChild(overlayNode);
 
-    // find elements inside this overlay
-    const overlayRoot = overlayNode.querySelector('.rec-overlay');
-    const box = overlayNode.querySelector('.rec-box');
     const recCountEl = overlayNode.querySelector('.rec-count');
     const recArc = overlayNode.querySelector('.rec-progress-arc');
     const waveCanvas = overlayNode.querySelector('.wave-canvas');
@@ -481,15 +474,17 @@ async function showRecordingOverlay({ durationSec = 3, bufferSize = 512, mfccCoe
     sampleIndexEl.textContent = sampleIndex && totalSamples ? `Sample ${sampleIndex}/${totalSamples}` : '';
     recCountEl.textContent = String(Math.ceil(durationSec));
 
-    // canvas sizing
     waveCanvas.width = waveCanvas.clientWidth * devicePixelRatio;
     waveCanvas.height = waveCanvas.clientHeight * devicePixelRatio;
     const wctx = waveCanvas.getContext('2d');
 
-    let audioCtx=null, src=null, analyser=null, meydaAnalyzer=null, stream=null;
+    let localAudioCtx = null;
+    let localSrc = null;
+    let localAnalyser = null;
+    let localMeyda = null;
+    let localStream = null;
     let cancelled=false, rafId=null, framesCount=0;
-    const rmsFrames=[], mfccFrames[], centroidFrames=[], zcrFrames[];
-
+    const rmsFrames=[], mfccFrames=[], centroidFrames=[], zcrFrames=[];
     let startTime = performance.now();
 
     function updateUI(){
@@ -500,10 +495,9 @@ async function showRecordingOverlay({ durationSec = 3, bufferSize = 512, mfccCoe
       const dash = (pct * 100).toFixed(2);
       recArc.setAttribute('stroke-dasharray', `${dash} 100`);
 
-      // waveform draw
-      if(analyser){
-        const data = new Float32Array(analyser.fftSize);
-        analyser.getFloatTimeDomainData(data);
+      if(localAnalyser){
+        const data = new Float32Array(localAnalyser.fftSize);
+        localAnalyser.getFloatTimeDomainData(data);
         const cw = waveCanvas.width, ch = waveCanvas.height;
         wctx.clearRect(0,0,cw,ch);
         wctx.fillStyle = '#fff';
@@ -526,10 +520,14 @@ async function showRecordingOverlay({ durationSec = 3, bufferSize = 512, mfccCoe
     function cleanupAndResolve(result){
       cancelled = true;
       try{ if(rafId) cancelAnimationFrame(rafId); }catch(e){}
-      try{ if(meydaAnalyzer) meydaAnalyzer.stop(); }catch(e){}
-      try{ if(audioCtx) audioCtx.close(); }catch(e){}
-      try{ if(stream) stream.getTracks().forEach(t=>t.stop()); }catch(e){}
+      try{ if(localMeyda) localMeyda.stop(); }catch(e){}
+      // stop local stream only if we created it here (localStream)
+      try{
+        if(localStream && localStream.getTracks) localStream.getTracks().forEach(t=>t.stop());
+      }catch(e){}
+      try{ if(localAudioCtx && typeof localAudioCtx.close === 'function') localAudioCtx.close(); }catch(e){}
       try{ document.body.removeChild(overlayNode); }catch(e){}
+      isRecordingSample = false;
       resolve(result);
     }
 
@@ -558,53 +556,100 @@ async function showRecordingOverlay({ durationSec = 3, bufferSize = 512, mfccCoe
       const avgRms = rmsFrames.length ? (rmsFrames.reduce((a,b)=>a+b,0)/rmsFrames.length) : 0;
       const avgCentroid = centroidFrames.length ? (centroidFrames.reduce((a,b)=>a+b,0)/centroidFrames.length) : 0;
       const avgZcr = zcrFrames.length ? (zcrFrames.reduce((a,b)=>a+b,0)/zcrFrames.length) : 0;
-      const centroidScaled = avgCentroid / 4000; // scale down centroid
+      const centroidScaled = avgCentroid / 4000;
       const combined = mfccNormalized.concat([centroidScaled, avgZcr]);
       uiLog(`Recording finished. frames=${mfccFrames.length} avgRms=${avgRms.toFixed(6)}`);
       cleanupAndResolve({ vector: combined, avgRms, avgCentroid, avgZcr, frames: mfccFrames.length });
     }
 
     try{
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      src = audioCtx.createMediaStreamSource(stream);
-      analyser = audioCtx.createAnalyser(); analyser.fftSize = 2048;
-      src.connect(analyser);
-
-      meydaAnalyzer = Meyda.createMeydaAnalyzer({
-        audioContext: audioCtx,
-        source: src,
-        bufferSize: bufferSize,
-        hopSize: Math.floor(bufferSize/2),
-        windowingFunction: "hanning",
-        featureExtractors: ["mfcc","rms","spectralCentroid","zcr"],
-        numberOfMFCCCoefficients: mfccCoeffs,
-        callback: (features) => {
-          if(!features) return;
-          const rms = features.rms || 0;
-          if(rms >= minFrameRms){
-            if(features.mfcc) mfccFrames.push(features.mfcc.slice());
-            rmsFrames.push(rms);
-            if(typeof features.spectralCentroid === 'number') centroidFrames.push(features.spectralCentroid);
-            if(typeof features.zcr === 'number') zcrFrames.push(features.zcr);
-            framesCount = mfccFrames.length;
-          }
-          // update numeric UI
-          rmsLabel.textContent = 'RMS: ' + (rms || 0).toFixed(6);
-          framesLabel.textContent = 'Frames: ' + framesCount;
-          const rmsPct = Math.min(1, (rms / 0.05));
-          rmsFill.style.width = (rmsPct*100).toFixed(2) + '%';
+      if(reuseMonitorStream && monitorStream && typeof AudioContext !== 'undefined' && (window.audioCtx || window.audioCtx === undefined)) {
+        // Reuse existing global audio context if available
+        // If global audioCtx exists we will use it; otherwise create a new one but reuse monitorStream
+        try{
+          // prefer existing global audioCtx if created by monitor
+          localAudioCtx = window.audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+        }catch(e){
+          localAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
         }
-      });
-      meydaAnalyzer.start();
-
-      startTime = performance.now();
-      rafId = requestAnimationFrame(updateUI);
-
-      setTimeout(()=> {
-        if(cancelled) return;
-        finishAndReturn();
-      }, durationSec * 1000);
+        // create MediaStreamSource from monitorStream
+        localStream = monitorStream;
+        localSrc = localAudioCtx.createMediaStreamSource(localStream);
+        localAnalyser = localAudioCtx.createAnalyser(); localAnalyser.fftSize = 2048;
+        // create a splitter to avoid interfering with monitor graph
+        const splitter = localAudioCtx.createChannelSplitter();
+        localSrc.connect(splitter);
+        // connect splitter output 0 to our analyser
+        splitter.connect(localAnalyser, 0);
+        localMeyda = Meyda.createMeydaAnalyzer({
+          audioContext: localAudioCtx,
+          source: localSrc,
+          bufferSize: bufferSize,
+          hopSize: Math.floor(bufferSize/2),
+          windowingFunction: "hanning",
+          featureExtractors: ["mfcc","rms","spectralCentroid","zcr"],
+          numberOfMFCCCoefficients: mfccCoeffs,
+          callback: (features) => {
+            if(!features) return;
+            const rms = features.rms || 0;
+            if(rms >= minFrameRms){
+              if(features.mfcc) mfccFrames.push(features.mfcc.slice());
+              rmsFrames.push(rms);
+              if(typeof features.spectralCentroid === 'number') centroidFrames.push(features.spectralCentroid);
+              if(typeof features.zcr === 'number') zcrFrames.push(features.zcr);
+              framesCount = mfccFrames.length;
+            }
+            rmsLabel.textContent = 'RMS: ' + (rms || 0).toFixed(6);
+            framesLabel.textContent = 'Frames: ' + framesCount;
+            const rmsPct = Math.min(1, (rms / 0.05));
+            rmsFill.style.width = (rmsPct*100).toFixed(2) + '%';
+          }
+        });
+        localMeyda.start();
+        startTime = performance.now();
+        rafId = requestAnimationFrame(updateUI);
+        setTimeout(()=> {
+          if(cancelled) return;
+          finishAndReturn();
+        }, durationSec * 1000);
+      } else {
+        // fallback: open fresh getUserMedia
+        localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        localAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        localSrc = localAudioCtx.createMediaStreamSource(localStream);
+        localAnalyser = localAudioCtx.createAnalyser(); localAnalyser.fftSize = 2048;
+        localMeyda = Meyda.createMeydaAnalyzer({
+          audioContext: localAudioCtx,
+          source: localSrc,
+          bufferSize: bufferSize,
+          hopSize: Math.floor(bufferSize/2),
+          windowingFunction: "hanning",
+          featureExtractors: ["mfcc","rms","spectralCentroid","zcr"],
+          numberOfMFCCCoefficients: mfccCoeffs,
+          callback: (features) => {
+            if(!features) return;
+            const rms = features.rms || 0;
+            if(rms >= minFrameRms){
+              if(features.mfcc) mfccFrames.push(features.mfcc.slice());
+              rmsFrames.push(rms);
+              if(typeof features.spectralCentroid === 'number') centroidFrames.push(features.spectralCentroid);
+              if(typeof features.zcr === 'number') zcrFrames.push(features.zcr);
+              framesCount = mfccFrames.length;
+            }
+            rmsLabel.textContent = 'RMS: ' + (rms || 0).toFixed(6);
+            framesLabel.textContent = 'Frames: ' + framesCount;
+            const rmsPct = Math.min(1, (rms / 0.05));
+            rmsFill.style.width = (rmsPct*100).toFixed(2) + '%';
+          }
+        });
+        localMeyda.start();
+        startTime = performance.now();
+        rafId = requestAnimationFrame(updateUI);
+        setTimeout(()=> {
+          if(cancelled) return;
+          finishAndReturn();
+        }, durationSec * 1000);
+      }
     }catch(err){
       uiLog('Recording failed: ' + (err.message || err));
       cleanupAndResolve(null);
@@ -613,8 +658,8 @@ async function showRecordingOverlay({ durationSec = 3, bufferSize = 512, mfccCoe
 }
 
 /* compatibility wrapper used by enrollment & verification */
-async function recordFeatures(durationSec=3, bufferSize=512, mfccCoeffs=13, minFrameRms=0.0003, sampleIndex=null, totalSamples=null){
-  return await showRecordingOverlay({ durationSec, bufferSize, mfccCoeffs, minFrameRms, sampleIndex, totalSamples, title:'Recording sample', sub:'Speak the same short phrase' });
+async function recordFeatures(durationSec=3, bufferSize=512, mfccCoeffs=13, minFrameRms=0.0003, sampleIndex=null, totalSamples=null, reuseMonitor = true){
+  return await showRecordingOverlay({ durationSec, bufferSize, mfccCoeffs, minFrameRms, sampleIndex, totalSamples, reuseMonitorStream: reuseMonitor });
 }
 
 /* ---------- cosine similarity ---------- */
@@ -636,7 +681,7 @@ async function enrollOwnerSamples(count=4, dur=3, minSampleRms=0.0015){
   uiLog(`Owner enrollment started: ${count} samples (${dur}s each)`);
   const vectors = [];
   for(let i=1;i<=count;i++){
-    const sample = await recordFeatures(dur, 512, 13, minSampleRms, i, count);
+    const sample = await recordFeatures(dur, 512, 13, minSampleRms, i, count, true);
     if(!sample){
       uiLog(`Sample ${i} failed or cancelled. Aborting enrollment.`);
       alert('Sample failed or cancelled. Enrollment aborted.');
@@ -675,7 +720,7 @@ async function verifyOwnerOnce(duration=2, minSampleRms=0.001){
   const owner = loadOwner();
   if(!owner || !owner.vectors || owner.vectors.length===0){ uiLog('No owner enrollment'); return { matched:false, reason:'no-enrollment' }; }
   uiLog('Owner verification: recording visual sample...');
-  const result = await recordFeatures(duration, 512, 13, minSampleRms);
+  const result = await recordFeatures(duration, 512, 13, minSampleRms, null, null, true);
   if(!result){ uiLog('Verification failed (no sample)'); return { matched:false, reason:'no-audio' }; }
   if(result.avgRms < minSampleRms){ uiLog('Verification sample too quiet'); return { matched:false, reason:'quiet' }; }
 
@@ -721,7 +766,14 @@ async function startSimpleMonitor(){
   if(monitorRunning) return;
   try{
     const stream = await navigator.mediaDevices.getUserMedia({audio:true});
+    monitorStream = stream; // save for reuse
+
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    // resume if suspended
+    if (audioCtx.state === 'suspended' && typeof audioCtx.resume === 'function') {
+      try { await audioCtx.resume(); } catch(e){ console.warn('audioCtx.resume failed', e); }
+    }
+
     micSrc = audioCtx.createMediaStreamSource(stream);
     analyser = audioCtx.createAnalyser(); analyser.fftSize = 2048;
     micSrc.connect(analyser);
@@ -733,6 +785,9 @@ async function startSimpleMonitor(){
     document.getElementById('stopMonitorHome').disabled = false;
     document.getElementById('homeSubtitle').textContent = 'Monitoring...';
     uiLog('Monitoring started');
+    // also attach to global for overlay reuse
+    window.audioCtx = audioCtx;
+    window.micSrc = micSrc;
     monitorLoopSimple();
   }catch(e){
     alert('Microphone permission required.');
@@ -742,8 +797,16 @@ async function startSimpleMonitor(){
 
 function stopSimpleMonitor(){
   if(raf) cancelAnimationFrame(raf);
-  try{ if(audioCtx) audioCtx.close(); }catch(e){}
+  try{
+    if(monitorStream && monitorStream.getTracks){
+      monitorStream.getTracks().forEach(t => t.stop());
+    }
+  }catch(e){ console.warn('stop tracks error', e); }
+  try{ if(audioCtx && typeof audioCtx.close === 'function') audioCtx.close(); }catch(e){}
   audioCtx=analyser=micSrc=null; dataArray=null; raf=null; monitorRunning=false;
+  monitorStream = null;
+  // cleanup global references
+  try{ delete window.audioCtx; delete window.micSrc; }catch(e){}
   document.getElementById('startMonitor').disabled=false;
   document.getElementById('stopMonitor').disabled=true;
   document.getElementById('startMonitorHome').disabled=false;
@@ -759,30 +822,58 @@ function monitorLoopSimple(){
   if(rms >= threshold && Date.now() - lastAlertAt > 4000){
     lastAlertAt = Date.now();
     uiLog('RMS trigger: ' + rms.toFixed(4));
-    (async ()=>{
-      try{
-        // capture short sample visually
-        const sample = await recordFeatures(2, 512, 13, 0.0005);
-        if(!sample){ uiLog('No sample captured for verification'); return; }
-        const requireOwner = document.getElementById('requireOwnerVoice').checked;
-        if(requireOwner){
-          uiLog('Owner verification required — performing verification');
-          const res = await verifyOwnerOnce(2, parseFloat(document.getElementById('ownerMinRms').value) || 0.001);
-          if(res.matched){
-            uiLog('Owner verified — prompting user (10s auto-cancel)');
-            await promptUserWithAutoAlert(timeoutSec, sample.avgRms);
-          } else {
-            uiLog('Owner mismatch — no alert sent.');
-            alert('Detected sound did not match owner voice. No alert sent.');
+    // Prevent overlapping verification recordings
+    if(isRecordingSample){
+      uiLog('Skip: sample already recording');
+    } else {
+      (async ()=>{
+        try{
+          // quick additional spectral heuristic using existing analyser (cheap check)
+          let centroid = 0;
+          try{
+            const freqBins = analyser.frequencyBinCount;
+            const freqData = new Float32Array(freqBins);
+            analyser.getFloatFrequencyData(freqData);
+            let num=0, den=0;
+            for(let i=0;i<freqBins;i++){
+              const mag = Math.pow(10, freqData[i]/20);
+              num += i * mag;
+              den += mag;
+            }
+            centroid = den ? (num/den) * (audioCtx.sampleRate/2) / freqBins : 0;
+          }catch(e){ centroid = 0; }
+
+          const sample = await recordFeatures(2, 512, 13, 0.0005, null, null, true);
+          if(!sample){ uiLog('No sample captured for verification'); return; }
+
+          // heuristic: pain-like sounds often have mid-high centroid or low zcr (simple heuristic)
+          const centroidOk = sample.avgCentroid && sample.avgCentroid > 150 && sample.avgCentroid < 3000;
+          const zcrOk = sample.avgZcr && sample.avgZcr < 0.18;
+          if(!(centroidOk || zcrOk)){
+            uiLog('Sound not matching pain profile (centroid/zcr). Ignored.');
+            return;
           }
-        } else {
-          uiLog('Owner verification not required — prompting user');
-          await promptUserWithAutoAlert(timeoutSec, sample.avgRms);
+
+          const requireOwner = document.getElementById('requireOwnerVoice').checked;
+          if(requireOwner){
+            uiLog('Owner verification required — performing verification');
+            const res = await verifyOwnerOnce(2, parseFloat(document.getElementById('ownerMinRms').value) || 0.001);
+            if(res.matched){
+              uiLog('Owner verified — prompting user (10s auto-cancel)');
+              await promptUserWithAutoAlert(timeoutSec, sample.avgRms);
+            } else {
+              uiLog('Owner mismatch — no alert sent.');
+              alert('Detected sound did not match owner voice. No alert sent.');
+            }
+          } else {
+            uiLog('Owner verification not required — prompting user');
+            await promptUserWithAutoAlert(timeoutSec, sample.avgRms);
+          }
+        }catch(e){
+          uiLog('Monitor loop error: ' + (e.message||e));
         }
-      }catch(e){
-        uiLog('Monitor loop error: ' + (e.message||e));
-      }
-    })();
+      })();
+    }
   }
   raf = requestAnimationFrame(monitorLoopSimple);
 }
@@ -918,7 +1009,7 @@ document.getElementById('manualAlert').addEventListener('click', ()=> sendAlert(
 document.getElementById('sendAlertBtn').addEventListener('click', ()=> sendAlert('manual_alert', 0));
 document.getElementById('viewPayload').addEventListener('click', ()=> { const p = sessionStorage.getItem('mimu_last_payload'); if(!p) return alert('No payload yet'); alert(p); });
 
-document.getElementById('callEmergency').addEventListener('click', ()=>{
+document.getElementById('callEmergency').addEventListener('click', ()=> {
   const profile = JSON.parse(localStorage.getItem('mimu_profile')||'{}')||{};
   const contacts = profile.emergencyContacts || [];
   if(!contacts.length) return alert('No emergency contact configured in Settings.');
