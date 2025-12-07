@@ -488,7 +488,7 @@ async function showRecordingOverlay({ durationSec = 3, bufferSize = 512, mfccCoe
 
     let audioCtx=null, src=null, analyser=null, meydaAnalyzer=null, stream=null;
     let cancelled=false, rafId=null, framesCount=0;
-    const rmsFrames=[], mfccFrames[], centroidFrames=[], zcrFrames[];
+    const rmsFrames=[], mfccFrames=[], centroidFrames=[], zcrFrames=[];
 
     let startTime = performance.now();
 
