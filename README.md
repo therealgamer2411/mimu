@@ -16,7 +16,6 @@ Live demo: https://<your-user>.github.io/<repo>/  ← replace with your Pages UR
 
 ## Files
 - `index.html` — single-file demo (UI + logic)
-- `assets/` — images, SVGs
 - `docs/` — demo script and Make/EasyConnect instructions
 
 License: MIT
