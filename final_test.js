@@ -1,28 +1,57 @@
-// استدعاء الحزمة الجديدة
-const OpenRAG = require('openrag-sdk2026');
+const io = require('socket.io-client');
+const SimplePeer = require('simple-peer');
+const wrtc = require('@roamhq/wrtc');
 
-// الاتصال باستخدام المفتاح الذي وضعته في Supabase
-const client = new OpenRAG({ 
-    apiKey: 'sk_zeunhnu8p2kbztfuymz4qp' 
+// 🔥 تأكد أن هذا الرابط هو رابط Koyeb الخاص بك وليس Localhost 🔥
+const SERVER_URL = "https://openrag-grid.koyeb.app"; 
+
+const socket = io(SERVER_URL);
+let iceServers = [];
+
+console.log("🔫 Sniper Started. Connecting to Koyeb...");
+
+socket.on('connect', () => {
+    console.log("✅ Connected to Server.");
 });
 
-(async () => {
-    try {
-        console.log("1. 🌐 Connecting to OpenRAG Grid...");
-        await client.connect();
-        console.log("✅ Connected to Server!");
+socket.on('CONFIG', (data) => {
+    iceServers = data.iceServers;
+    console.log("⚙️ Config Loaded. Hunting for Phone...");
+    
+    // البحث كل 3 ثواني
+    setInterval(() => {
+        socket.emit('FIND_NODE');
+    }, 3000);
+});
 
-        console.log("2. 🔍 Searching for a Gamer Node...");
-        // سنطلب معرفة الـ IP لنثبت أنه IP هاتفك وليس سيرفر
-        const responseBody = await client.fetch('https://api.ipify.org?format=json');
-        
-        console.log("\n🎉 WOOHOO! Data Received from Residential IP:");
-        console.log(responseBody); // يجب أن يطبع IP هاتفك المحمول
+socket.on('NODE_FOUND', ({ targetId }) => {
+    console.log(`🎯 TARGET FOUND: ${targetId}. Connecting...`);
+    
+    const p = new SimplePeer({
+        initiator: true,
+        trickle: true,
+        wrtc: wrtc,
+        config: {
+            iceServers: iceServers,
+            iceTransportPolicy: 'relay' // 🔥 إجبار Relay من جهة الكمبيوتر أيضاً
+        }
+    });
 
-    } catch (err) {
-        console.error("❌ Error:", err.message);
-    } finally {
-        client.disconnect();
+    p.on('signal', (data) => {
+        socket.emit('SIGNAL', { target: targetId, signal: data });
+    });
+
+    socket.on('SIGNAL', (data) => {
+        if (data.sender === targetId) p.signal(data.signal);
+    });
+
+    p.on('connect', () => {
+        console.log("\n🚀🚀🚀 BOOM! CONNECTION ESTABLISHED! 🚀🚀🚀");
+        p.send(JSON.stringify({ url: "test" }));
+    });
+
+    p.on('data', (data) => {
+        console.log("📦 Response from Phone:", JSON.parse(data.toString()));
         process.exit(0);
-    }
-})();
+    });
+});
